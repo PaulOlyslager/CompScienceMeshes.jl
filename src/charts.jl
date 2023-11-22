@@ -1,19 +1,36 @@
 #export Simplex
-
+import Base.sign
 
 # U: the dimension of the universe
 # D: the dimension of the manifold
 # N: the number of vertices
 # T: the type of the coordinates
 # C: the complimentary dimension (should always be U-D)
-struct Simplex{U,D,C,N,T}
+abstract type AbstractSimplex{U,D,C,N,T} end
+struct Simplex{U,D,C,N,T} <: AbstractSimplex{U,D,C,N,T}
     vertices::SVector{N,SVector{U,T}}
     tangents::SVector{D,SVector{U,T}}
     normals::SVector{C,SVector{U,T}}
     volume::T
 end
-normal(t::Simplex{3,2,1,3,<:Number}) = t.normals[1]
-dimtype(splx::Simplex{U,D}) where {U,D} = Val{D}
+struct MirroredSimplex{U,D,C,N,T} <: AbstractSimplex{U,D,C,N,T}
+    simplex::Simplex{U,D,C,N,T}
+end
+
+
+normal(t::Simplex{U,D,1}) where {U,D} = t.normals[1]
+normal(t::MirroredSimplex) = -normal(t.simplex)
+normals(t::Simplex) = t.normals
+normals(t::MirroredSimplex) = -normals(t.simplex)
+
+sign(s::Simplex{U,D,1}) where {U,D} = 1
+sign(s::MirroredSimplex{<:Simplex{U,D,1}}) where {U,D} = -1
+
+mirror(t::Simplex{U,D,1}) where {U,D} = MirroredSimplex(t)
+mirror(t::MirroredSimplex{U,D,1}) where {U,D} = t.simplex
+
+#normal(t::Simplex{3,2,1,3,<:Number}) = t.normals[1]
+dimtype(splx::AbstractSimplex{U,D}) where {U,D} = Val{D}
 """
     permute_simplex(simplex,permutation)
 
@@ -21,38 +38,112 @@ Permutation is a Vector v which sets the v[i]-th vertex at the i-th place.
 
 Return Simplex with permuted vertices list, tangents are recalculated, normal is kept the same
 """
-function permute_vertices(s::Simplex{3,2,1,3,T},permutation::Union{Vector{P},SVector{P}}) where {T,P}
-    vert = SVector{3,SVector{3,T}}(s.vertices[permutation])
+function permute_vertices(s::Simplex{U,D,1},permutation::Union{Vector{P},SVector{P}}) where {U,D,P}
+    vert = SVector{D+1,SVector{U,T}}(verticeslist(s)[permutation])
     simp = simplex(vert)
-    Simplex(simp.vertices,simp.tangents,s.normals,simp.volume)
+    sign(dot(normal(s),normal(simp))) == 1 && return simp
+    return mirror(simp)
 end
 
-"""
-    flip_normal(simplex)
+# """
+#     flip_normal(simplex)
 
-Flips the normal of the simplex. Only on triangles embedded in 3D space
-"""
-flip_normal(t::Simplex{3,2,1,3,<:Number}) = Simplex(t.vertices,t.tangents,-t.normals,t.volume)
+# Flips the normal of the simplex. Only on triangles embedded in 3D space
+# """
+# flip_normal(t::Simplex{3,2,1,3,<:Number}) = Simplex(t.vertices,t.tangents,-t.normals,t.volume)
 
-"""
-    flip_normal(simplex, sign)
+# """
+#     flip_normal(simplex, sign)
 
-Flips the normal of the simplex if sign is -1. Only on triangles embedded in 3D space
+# Flips the normal of the simplex if sign is -1. Only on triangles embedded in 3D space
+# """
+# function flip_normal(t::Simplex{3,2,1,3,<:Number},sign::Int)
+#     sign == 1 && return t
+#     return flip_normal(t)
+#     end
+# export flip_normal
 """
-function flip_normal(t::Simplex{3,2,1,3,<:Number},sign::Int)
-    sign == 1 && return t
-    return flip_normal(t)
+    boundary(simplex)
+
+returns a list of simplices where the extra normal is defined to be pointing outward of the original simplex.
+The basis defined by the tangents and normals is right-handed.
+"""
+function boundary(p::Simplex{U,D,C,N,T}) where {U,D,C,N,T}
+    overall_normals = normals(p)
+    v = verticeslist(p)
+    s = [simplex(SVector((v[union(1:i-1,i+1:N)]...)),overall_normals) for i in 1:N]
+    midles = [sum(v[union(1:i-1,i+1:N)])/(N-1) for i in 1:N]
+    middle = sum(v)/N
+    boundary = Simplex{U,D-1,C+1,N-1,T}[]
+    
+    for (mid,simp) in zip(midles,s)
+        TV = typeof(verticeslist(simp))
+        TT = typeof(simp.tangents)
+        permutation = [i for i in 1:N-1]
+        perm_tang = [i for i in 1:N-2]
+        final_normals = SVector{U,T}[]
+        TP = typeof(normals(simp))
+        for n in normals(simp)
+            if sign(dot(mid-middle,n)) != 0.0
+                push!(final_normals,SVector{U,T}(n*sign(dot(mid-middle,n))))
+            else
+                push!(final_normals,n)
+            end
+        end
+        m = hcat([simp.tangents;final_normals]...)
+        if det(m) < -eps()
+            permutation[1], permutation[2] = 2, 1
+            perm_tang[1], perm_tang[2] = 2, 1
+        end
+
+        push!(boundary,typeof(simp)(TV(verticeslist(simp)[permutation]),TT(simp.tangents[perm_tang]),TP(final_normals),simp.volume))
     end
-export flip_normal
+    return boundary
+end
 
-tangents(s::Simplex{3,2,1,3,<:Number},i) = s.tangents[i]
+function boundary(p::Simplex{U,D,C,3,T}) where {U,D,C,T}
+    overall_normals = normals(p)
+    v = verticeslist(p)
+    N=3
+    s = [simplex(SVector((v[union(1:i-1,i+1:N)]...)),overall_normals) for i in 1:N]
+    midles = [sum(v[union(1:i-1,i+1:N)])/(N-1) for i in 1:N]
+    middle = sum(v)/N
+    boundary = Simplex{U,D-1,C+1,N-1,T}[]
+    
+    for (mid,simp) in zip(midles,s)
+        TV = typeof(verticeslist(simp))
+        TT = typeof(simp.tangents)
+        permutation = [i for i in 1:N-1]
+        perm_tang = 1
+        final_normals = SVector{U,T}[]
+        TP = typeof(normals(simp))
+        for n in normals(simp)
+            if sign(dot(mid-middle,n)) != 0.0
+                push!(final_normals,SVector{U,T}(n*sign(dot(mid-middle,n))))
+            else
+                push!(final_normals,n)
+            end
+        end
+        m = hcat([simp.tangents;final_normals]...)
+        if det(m) < -eps()
+            permutation[1], permutation[2] = 2, 1
+            perm_tang = -1
+        end
+
+        push!(boundary,typeof(simp)(TV(verticeslist(simp)[permutation]),TT(simp.tangents*perm_tang),TP(final_normals),simp.volume))
+    end
+    return boundary
+end
+
+tangents(s::Simplex,i) = s.tangents[i]
+tangents(s::MirroredSimplex,i) = tangents(s.simplex,i)
 """
     coordtype(simplex)
 
 Return coordinate type used by simplex.
 """
-coordtype(::Type{Simplex{U,D,C,N,T}}) where {U,D,C,N,T} = T
-coordtype(p::Simplex) = coordtype(typeof(p))
+coordtype(::Type{<:AbstractSimplex{U,D,C,N,T}}) where {U,D,C,N,T} = T
+coordtype(p::AbstractSimplex) = coordtype(typeof(p))
 
 
 """
@@ -61,7 +152,7 @@ coordtype(p::Simplex) = coordtype(typeof(p))
 Return the volume of the simplex.
 """
 volume(p::Simplex) = p.volume
-
+volume(p::MirroredSimplex) = volume(p.simplex)
 
 """
 A tuple of points, aka an interval behaves trivially like a chart
@@ -74,14 +165,14 @@ volume(x::Tuple{T,T}) where {T} = norm(x[2]-x[1])
 
 Return the manifold dimension of the simplex.
 """
-dimension(::Type{Simplex{U,D,C,N,T}}) where {U,D,C,N,T} = D
+dimension(::Type{<:AbstractSimplex{U,D,C,N,T}}) where {U,D,C,N,T} = D
 
 """
     dimension(simplex)
 
 Return the manifold dimension of the simplex.
 """
-dimension(p::Simplex) = dimension(typeof(p))
+dimension(p::AbstractSimplex) = dimension(typeof(p))
 
 
 """
@@ -89,7 +180,7 @@ dimension(p::Simplex) = dimension(typeof(p))
 
 Returns the number of vertices (equals dimension + 1)
 """
-Base.length(p::Simplex) = dimension(typeof(p))+1
+Base.length(p::AbstractSimplex) = dimension(typeof(p))+1
 
 
 """
@@ -97,8 +188,8 @@ Base.length(p::Simplex) = dimension(typeof(p))+1
 
 Return the dimension of the universe in which `p` is embedded.
 """
-universedimension(::Type{Simplex{U,D,C,N,T}}) where {U,D,C,N,T} = U
-universedimension(p::Simplex) = universedimension(typeof(p))
+universedimension(::Type{<:AbstractSimplex{U,D,C,N,T}}) where {U,D,C,N,T} = U
+universedimension(p::AbstractSimplex) = universedimension(typeof(p))
 
 
 """
@@ -107,7 +198,7 @@ universedimension(p::Simplex) = universedimension(typeof(p))
 
 Get the vertices at index I (scalar or array) defining the simplex
 """
-getindex(p::Simplex, I::Union{Number,SVector,Array}) = p.vertices[I]
+getindex(p::AbstractSimplex, I::Union{Number,SVector,Array}) = verticeslist(p)[I]
 
 
 
@@ -140,6 +231,25 @@ of vertices supplied minus one.
     quote
         tangents = $xp2
         normals, volume = _normals(tangents, Val{$C})
+        Simplex(vertices, tangents, normals, $T(volume))
+    end
+end
+
+@generated function simplex(vertices::SVector{D1,P}, defined_normals::SVector{C,SVector{U,T}}) where {D1,P,C,U,T}
+    @assert U == length(P)
+    D = D1 - 1
+    @assert C <= U-D
+    CC = U-D
+    @assert T == eltype(P)
+    xp1 =:(())
+    for i in 1:D
+        push!(xp1.args, :(vertices[$i]-vertices[end]))
+    end
+    xp2 = :(SVector{$D,P}($xp1))
+    quote
+
+        tangents = $xp2
+        normals, volume = _normals(tangents, defined_normals, Val{$CC})
         Simplex(vertices, tangents, normals, $T(volume))
     end
 end
@@ -210,9 +320,41 @@ function _normals(tangents, ::Type{Val{C}}) where C
 
     metric = T[dot(tangents[i], tangents[j]) for i in 1:D, j in 1:D]
     volume = sqrt(abs(det(metric))) / factorial(D)
-
+    t = hcat(tangents...)
     # Fix this. This function needs to become gneerated
-    normals = SVector{C,PT}(PT[zero(PT) for i in 1:C])
+    N = I-t*(metric^-1)*transpose(t)
+    n = PT[]
+    
+    for i in eachrow(qr(N).R)
+        norm(i)>0.8 && push!(n,PT(i))
+    end
+    det(hcat([tangents;n])) < -eps() && (n[end] = -n[end])
+    normals = SVector{C,PT}(PT[n[i] for i in 1:C])
+
+    return normals, volume
+end
+function _normals(tangents, defined_normals, ::Type{Val{C}}) where C
+    PT = eltype(tangents)
+    D  = length(tangents)
+    U = length(PT)
+    T  = eltype(PT)
+    
+
+    metric = T[dot(tangents[i], tangents[j]) for i in 1:D, j in 1:D]
+    ndef = hcat(defined_normals...)
+    length(ndef)==0 && (ndef=0)
+    volume = sqrt(abs(det(metric))) / factorial(D)
+    t = hcat(tangents...)
+    # Fix this. This function needs to become gneerated
+    N = I-t*(metric^-1)*transpose(t).-ndef*transpose(ndef)
+    n = PT[]
+    for i in defined_normals; push!(n,i); end
+    
+    for i in eachrow(qr(transpose(N)).R)
+        norm(i)>0.8 && push!(n,PT(Vector(i)))
+    end
+    det(hcat([tangents;n])) < -eps() && (n[end] = -n[end])
+    normals = SVector{C,PT}((n)...)
 
     return normals, volume
 end
@@ -240,10 +382,10 @@ end
 
 Returns the point in the simplex with barycentric coordinates uv
 """
-function barytocart(mani::Simplex, u)
-    r = last(mani.vertices)
+function barytocart(mani::AbstractSimplex, u)
+    r = last(verticeslist(mani))
     for i in 1 : dimension(mani)
-        ti = mani.tangents[i]
+        ti = tangents(mani,i)
         ui = u[i]
         #r += mani.tangents[i] * u[i]
         r += ti * ui
@@ -259,11 +401,11 @@ Compute the barycentric coordinates on 'simplex' of 'point'.
 """
 function carttobary(p::Simplex{U,D,C,N,T}, cart) where {U,D,C,N,T}
 
-    G = [dot(p.tangents[i], p.tangents[j]) for i in 1:D, j in 1:D]
+    G = [dot(tangents(p,i), tangents(p,j)) for i in 1:D, j in 1:D]
     #w = [dot(p.tangents[i], cart - p.vertices[end]) for i in 1:D]
 
-    o = p.vertices[end]
-    w = [sum(t[j]*(cart[j]-o[j]) for j in 1:length(cart)) for t in p.tangents]
+    o = verticeslist(p)[end]
+    w = [sum(t[j]*(cart[j]-o[j]) for j in 1:length(cart)) for t in tangents(p)]
 
     u = G \ w
 
@@ -275,12 +417,12 @@ const _edgeidx24 = [relorientation(c, SVector(1,2,3,4)) for c in _combs24]
 const _combs24_pos = [(p > 0 ? _combs24[i] : reverse(_combs24[i])) for (i,p) in enumerate(_edgeidx24)]
 const _edgeidx24_abs = abs.(_edgeidx24)
 
-function edges(s::Simplex{3,3})
-    T = eltype(eltype(s.vertices))
+function edges(s::AbstractSimplex{3,3})
+    T = eltype(eltype(verticeslist(s)))
     P = Simplex{3,1,2,2,T}
     Edges = Vector{P}(undef, length(_combs24_pos))
     for (i,c) in zip(_edgeidx24_abs, _combs24_pos)
-        edge = simplex(s.vertices[c[1]], s.vertices[c[2]])
+        edge = simplex(verticeslist(s)[c[1]], vertieslist(s)[c[2]])
         Edges[i] = edge
     end
     return Edges
@@ -301,11 +443,11 @@ end
 #     return Edges
 # end
 
-function edges(s::Simplex{3,2})
+function edges(s::AbstractSimplex{3,2})
     return [
-        simplex(s.vertices[2], s.vertices[3]),
-        simplex(s.vertices[3], s.vertices[1]),
-        simplex(s.vertices[1], s.vertices[2])]
+        simplex(verticeslist(s)[2], verticeslist(s)[3]),
+        simplex(verticeslist(s)[3], verticeslist(s)[1]),
+        simplex(verticeslist(s)[1], verticeslist(s)[2])]
 end
 
 function faces(c)
@@ -316,7 +458,7 @@ function faces(c)
     ]
 end
 
-function faces(c::CompScienceMeshes.Simplex{3,3,0,4,T}) where {T}
+function faces(c::AbstractSimplex{3,3,0,4,T}) where {T}
     @SVector[
         simplex(c[4],c[3],c[2]),
         simplex(c[1],c[3],c[4]),
@@ -370,8 +512,10 @@ neighborhood(ch::ReferenceSimplex, u) = u
 Returns a matrix whose columns are the tangents of the simplex `splx`.
 """
 tangents(splx::Simplex) = hcat((splx.tangents)...)
+tangents(splx::MirroredSimplex) = tangents(splx.simplex)
 
 vertices(splx::Simplex) = hcat((splx.vertices)...)
+vertices(splx::MirroredSimplex) = vertices(splx.simplex)
 
 """
     verticeslist(simplex)
@@ -379,4 +523,5 @@ vertices(splx::Simplex) = hcat((splx.vertices)...)
 Returns the vertices as a list.
 """
 verticeslist(splx::Simplex) = splx.vertices
+verticeslist(splx::MirroredSimplex) = verticeslist(splx.simplex)
 export verticeslist

@@ -1,5 +1,5 @@
 struct MeshPointNM{U,D,C,N,T}
-    patch::Simplex{U,D,C,N,T}
+    patch::AbstractSimplex{U,D,C,N,T}
     bary::SVector{D,T}
     cart::SVector{U,T}
 end

@@ -172,6 +172,53 @@ function sutherlandhodgman2d(subject,clipper)
     return clipped
 end
 
+function sutherlandhodgman2d_full(subject,clipper)
+    set_of_sets = []
+    PT = eltype(subject)
+
+    clipped = Array(copy(subject))
+    sizehint!(clipped, 8)
+
+    input = Array(copy(clipped))
+    sizehint!(input, 8)
+
+    b = last(clipper)
+    for a in clipper
+        other = []
+        resize!(input, length(clipped))
+        copyto!(input, clipped)
+        resize!(clipped, 0)
+
+        isempty(input) || (q = last(input))
+
+        for p in input
+            if leftof(p, b, a)
+                if !leftof(q, b, a)
+                    ist = intersectlines(b,a,q,p)
+                    push!(clipped, ist)
+                    push!(other,ist)
+                end
+
+                push!(clipped, p)
+
+            elseif leftof(q, b, a)
+                push!(other,p)
+                ist = intersectlines(b,a,q,p)
+                push!(clipped, ist)
+                push!(other,ist)
+            else
+                push!(other,p)
+            end
+
+            q = p
+        end
+        b = a
+        push!(set_of_sets,other)
+    end
+    
+    return set_of_sets,clipped
+end
+
 #export sutherlandhodgman
 
 """
@@ -190,4 +237,72 @@ function sutherlandhodgman(subject, clipper)
     clipped2d = sutherlandhodgman2d(subject2d, clipper2d)
     clipped = [barytocart(triangle,q) for q in clipped2d ]
 
+end
+function sutherlandhodgman(subject::Simplex, clipper::Simplex)
+    b = boundary(clipper)
+    vertices = verticeslist(subject)
+    clipped = Array(copy(vertices))
+    for bound in b
+        input = copy(clipped)
+        clipped = []
+        for v in input
+            if det([[bound.tangents;normals(bound)[1:end-1]];v-verticeslist(bound)[end]]) > 0
+                for q in input
+                    if det([[bound.tangents;normals(bound)[1:end-1]];q-verticeslist(bound)[end]]) <= 0
+
+                        #TODO eerst naar barycentric van clipper mappen. resulteert in een systeem waar determinant betekenis heeft.
+
+                    end
+                end
+            else
+                push!(clipped,v)
+            end
+        end
+    end
+
+end
+
+function sutherlandhodgman_full(subject, clipper)
+
+    triangle = simplex(clipper, Val{2})
+    subject2d = [carttobary(triangle,p) for p in subject]
+    for p in subject2d for x in p @assert !isinf(x) end end
+    clipper2d = [carttobary(triangle,q) for q in clipper]
+    for p in clipper2d for x in p @assert !isinf(x) end end
+    set_of_sets2d,clipped2d = sutherlandhodgman2d_full(subject2d, clipper2d)
+    set_of_sets = [[barytocart(triangle,i) for i in q] for q in set_of_sets2d]
+    clipped = [barytocart(triangle,q) for q in clipped2d ]
+    return set_of_sets,clipped
+end
+
+function complementary_mesh(p1::Simplex{3,2,1,3}, p2::Simplex{3,2,1,3}; tol=eps())
+    set_of_sets1,pq = sutherlandhodgman_full(p1.vertices, p2.vertices)
+    set_of_sets2,_ = sutherlandhodgman_full(p2.vertices, p1.vertices)
+    nonoriented_pq = [ simplex(pq[1], pq[i], pq[i+1]) for i in 2:length(pq)-1 ]
+    nonoriented_set1 = []
+    nonoriented_set2 = []
+    for p in set_of_sets1
+        for i in 2:length(p)-1
+            push!(nonoriented_set1,simplex(p[1],p[i],p[i+1]))
+        end
+    end
+    for p in set_of_sets2
+        for i in 2:length(p)-1
+            push!(nonoriented_set2,simplex(p[1],p[i],p[i+1]))
+        end
+    end
+
+    nonoriented_pq = nonoriented_pq[volume.(nonoriented_pq).>tol]
+    nonoriented_set1 = nonoriented_set1[volume.(nonoriented_set1).>tol]
+    nonoriented_set2 = nonoriented_set2[volume.(nonoriented_set2).>tol]
+
+
+    signs1_pq = Int.(sign.(dot.(normal.(nonoriented_pq),Ref(normal(p1)))))
+    signs2_pq = Int.(sign.(dot.(normal.(nonoriented_pq),Ref(normal(p2)))))
+    signs_set1 = Int.(sign.(dot.(normal.(nonoriented_set1),Ref(normal(p1)))))
+    signs_set2 = Int.(sign.(dot.(normal.(nonoriented_set2),Ref(normal(p2)))))
+
+    out1 = [flip_normal.(nonoriented_pq,signs1_pq);flip_normal.(nonoriented_set1,signs_set1)]
+    out2 = [flip_normal.(nonoriented_pq,signs2_pq);flip_normal.(nonoriented_set2,signs_set2)]
+    return out1,out2
 end
