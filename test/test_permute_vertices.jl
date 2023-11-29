@@ -12,7 +12,7 @@ splx = simplex(
 splx1 = CompScienceMeshes.permute_vertices(splx, [2,1,3])
 @test normal(splx1) ≈ point(0,0,1)
 
-splx2 = CompScienceMeshes.flip_normal(splx)
+splx2 = CompScienceMeshes.mirror(splx)
 @test normal(splx2) ≈ point(0,0,-1)
 
 for i in 1:2

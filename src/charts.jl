@@ -38,8 +38,8 @@ Permutation is a Vector v which sets the v[i]-th vertex at the i-th place.
 
 Return Simplex with permuted vertices list, tangents are recalculated, normal is kept the same
 """
-function permute_vertices(s::Simplex{U,D,1},permutation::Union{Vector{P},SVector{P}}) where {U,D,P}
-    vert = SVector{D+1,SVector{U,T}}(verticeslist(s)[permutation])
+function permute_vertices(s::AbstractSimplex{U,D,1,N,T},permutation::Union{Vector{P},SVector{P}}) where {U,D,P,N,T}
+    vert = SVector{N,SVector{U,T}}(verticeslist(s)[permutation])
     simp = simplex(vert)
     sign(dot(normal(s),normal(simp))) == 1 && return simp
     return mirror(simp)
@@ -52,16 +52,16 @@ end
 # """
 # flip_normal(t::Simplex{3,2,1,3,<:Number}) = Simplex(t.vertices,t.tangents,-t.normals,t.volume)
 
-# """
-#     flip_normal(simplex, sign)
+"""
+    flip_normal(simplex, sign)
 
-# Flips the normal of the simplex if sign is -1. Only on triangles embedded in 3D space
-# """
-# function flip_normal(t::Simplex{3,2,1,3,<:Number},sign::Int)
-#     sign == 1 && return t
-#     return flip_normal(t)
-#     end
-# export flip_normal
+Flips the normal of the simplex if sign is -1. Only on triangles embedded in 3D space
+"""
+function flip_normal(t::Simplex{3,2,1,3,<:Number},sign::Int)
+    sign == 1 && return t
+    return mirror(t)
+    end
+export flip_normal
 """
     boundary(simplex)
 
@@ -117,19 +117,13 @@ function boundary(p::Simplex{U,D,C,3,T}) where {U,D,C,T}
         perm_tang = 1
         final_normals = SVector{U,T}[]
         TP = typeof(normals(simp))
-        for n in normals(simp)
-            if sign(dot(mid-middle,n)) != 0.0
-                push!(final_normals,SVector{U,T}(n*sign(dot(mid-middle,n))))
-            else
-                push!(final_normals,n)
-            end
-        end
-        m = hcat([simp.tangents;final_normals]...)
+        ns = Vector(normals(simp))
+        ns[end] = SVector{U,T}(ns[end]*sign(dot(mid-middle,ns[end])))
+        m = hcat([simp.tangents;ns]...)
         if det(m) < -eps()
             permutation[1], permutation[2] = 2, 1
             perm_tang = -1
         end
-
         push!(boundary,typeof(simp)(TV(verticeslist(simp)[permutation]),TT(simp.tangents*perm_tang),TP(final_normals),simp.volume))
     end
     return boundary
@@ -321,19 +315,24 @@ function _normals(tangents, ::Type{Val{C}}) where C
     metric = T[dot(tangents[i], tangents[j]) for i in 1:D, j in 1:D]
     volume = sqrt(abs(det(metric))) / factorial(D)
     t = hcat(tangents...)
+    length(t) != 0 ? N = Matrix{T}(I,U,U)-t*(metric^-1)*transpose(t) : N = Matrix{T}(I,U,U)
     # Fix this. This function needs to become gneerated
-    N = I-t*(metric^-1)*transpose(t)
+    #N = Matrix{T}(I,U,U)-t*(metric^-1)*transpose(t)
     n = PT[]
-    
+
     for i in eachrow(qr(N).R)
         norm(i)>0.8 && push!(n,PT(i))
     end
-    det(hcat([tangents;n])) < -eps() && (n[end] = -n[end])
+
+    if C > 0
+        det(hcat([tangents;n]...)) < -eps() && (n[end] = -n[end])
+    end
+   
     normals = SVector{C,PT}(PT[n[i] for i in 1:C])
 
     return normals, volume
 end
-function _normals(tangents, defined_normals, ::Type{Val{C}}) where C
+function _normals(tangents, defined_normals, ::Type{Val{C}}) where C #TODO fix this function
     PT = eltype(tangents)
     D  = length(tangents)
     U = length(PT)
@@ -353,7 +352,7 @@ function _normals(tangents, defined_normals, ::Type{Val{C}}) where C
     for i in eachrow(qr(transpose(N)).R)
         norm(i)>0.8 && push!(n,PT(Vector(i)))
     end
-    det(hcat([tangents;n])) < -eps() && (n[end] = -n[end])
+    det(hcat([tangents;n]...)) < -eps() && (n[end] = -n[end])
     normals = SVector{C,PT}((n)...)
 
     return normals, volume
@@ -405,7 +404,7 @@ function carttobary(p::Simplex{U,D,C,N,T}, cart) where {U,D,C,N,T}
     #w = [dot(p.tangents[i], cart - p.vertices[end]) for i in 1:D]
 
     o = verticeslist(p)[end]
-    w = [sum(t[j]*(cart[j]-o[j]) for j in 1:length(cart)) for t in tangents(p)]
+    w = [sum(t[j]*(cart[j]-o[j]) for j in 1:length(cart)) for t in tangentlist(p)]
 
     u = G \ w
 
@@ -422,7 +421,7 @@ function edges(s::AbstractSimplex{3,3})
     P = Simplex{3,1,2,2,T}
     Edges = Vector{P}(undef, length(_combs24_pos))
     for (i,c) in zip(_edgeidx24_abs, _combs24_pos)
-        edge = simplex(verticeslist(s)[c[1]], vertieslist(s)[c[2]])
+        edge = simplex(verticeslist(s)[c[1]], verticeslist(s)[c[2]])
         Edges[i] = edge
     end
     return Edges
@@ -503,7 +502,7 @@ end
 barytocart(ch::ReferenceSimplex, u) = barytocart(ch.simplex, u)
 carttobary(ch::ReferenceSimplex, p) = carttobary(ch.simplex, p)
 
-domain(ch::Simplex{U,D,C,N,T}) where {U,D,C,T,N} = ReferenceSimplex{D,T,N}()
+domain(ch::AbstractSimplex{U,D,C,N,T}) where {U,D,C,T,N} = ReferenceSimplex{D,T,N}()
 neighborhood(ch::ReferenceSimplex, u) = u
 
 """
@@ -524,4 +523,8 @@ Returns the vertices as a list.
 """
 verticeslist(splx::Simplex) = splx.vertices
 verticeslist(splx::MirroredSimplex) = verticeslist(splx.simplex)
+
+tangentlist(splx::Simplex) = splx.tangents
+tangentlist(splx::AbstractSimplex) = tangents(splx.simplex)
 export verticeslist
+export tangentlist

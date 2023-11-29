@@ -52,7 +52,7 @@ PW = quadpoints(chart, rule)
 I = sum(pw[2]*f(pw[1]) for pw in PW)
 ```
 """
-function quadpoints(chart::Union{Simplex,subd_chart}, rule)
+function quadpoints(chart::Union{AbstractSimplex,subd_chart}, rule)
     PV = quadpoints(domain(chart), rule)
     map(PV) do pv
         q = neighborhood(chart, pv[1])

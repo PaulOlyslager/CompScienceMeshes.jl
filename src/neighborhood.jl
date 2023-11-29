@@ -44,7 +44,7 @@ jacobian(mp::MeshPointNM) = volume(mp.patch) * factorial(dimension(mp.patch))
 Return the i-th tangent vector at the neighborhood.
 """
 function tangents(mp::MeshPointNM, i)
-    mp.patch.tangents[i]
+    tangents(mp.patch,i)
 end
 
 
@@ -54,7 +54,7 @@ end
 Return the normal at a neighborhood on a surface.
 """
 function normal(mp::MeshPointNM)
-    mp.patch.normals[1]
+    normals(mp.patch)[1]
 end
 
 """
@@ -62,13 +62,14 @@ end
 
 Create a neighborhood from a chart and a set of parameter values.
 """
-function neighborhood(p::Simplex, bary)
+function neighborhood(p::AbstractSimplex, bary)
   D = dimension(p)
   T = coordtype(p)
   P = SVector{D,T}
   cart = barytocart(p, T.(bary))
   MeshPointNM(p, P(bary), cart)
 end
+
 
 """
     center(simplex) -> neighborhood
