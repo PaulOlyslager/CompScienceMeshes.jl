@@ -122,6 +122,16 @@ function leftof(p,a,b)
 
 end
 
+function _leftof_extended(p,a,b)
+    tol = sqrt(eps(eltype(a)))
+    ap = @SVector [ p[1]-a[1], p[2]-a[2] ]
+    ab = @SVector [ b[1]-a[1], b[2]-a[2] ]
+    det = ap[1]*ab[2] - ap[2]*ab[1] 
+    det <= -tol && return 1
+    det >= tol && return -1
+    return 0
+end
+
 #export sutherlandhodgman2d
 
 """
@@ -173,7 +183,7 @@ function sutherlandhodgman2d(subject,clipper)
 end
 
 function sutherlandhodgman2d_full(subject,clipper)
-    set_of_sets = []
+    
     PT = eltype(subject)
 
     clipped = Array(copy(subject))
@@ -183,8 +193,12 @@ function sutherlandhodgman2d_full(subject,clipper)
     sizehint!(input, 8)
 
     b = last(clipper)
+    other = Array(copy(subject))
+    sizehint!(other,8)
+    set_of_sets = []
+    
     for a in clipper
-        other = []
+        resize!(other,0)
         resize!(input, length(clipped))
         copyto!(input, clipped)
         resize!(clipped, 0)
@@ -192,16 +206,19 @@ function sutherlandhodgman2d_full(subject,clipper)
         isempty(input) || (q = last(input))
 
         for p in input
-            if leftof(p, b, a)
-                if !leftof(q, b, a)
+            if _leftof_extended(p, b, a) == 1
+                if _leftof_extended(q, b, a) == -1
                     ist = intersectlines(b,a,q,p)
                     push!(clipped, ist)
                     push!(other,ist)
                 end
 
                 push!(clipped, p)
+            elseif _leftof_extended(p, b, a) == 0
+                push!(clipped,p)
+                push!(other,p)
 
-            elseif leftof(q, b, a)
+            elseif _leftof_extended(q, b, a) == 1
                 push!(other,p)
                 ist = intersectlines(b,a,q,p)
                 push!(clipped, ist)
@@ -212,13 +229,33 @@ function sutherlandhodgman2d_full(subject,clipper)
 
             q = p
         end
-        b = a
-        push!(set_of_sets,other)
+
+        
+        t = [other[i]-other[end] for i in 1:length(other)-1]
+        if rank(hcat((t...))) < 2 
+            b = a
+            continue
+        end
+
+        ind = findall(i->rank(hcat(([a-b,other[i]-b]...)))==1,1:length(other))
+        if length(other[ind]) > 1
+            p1,p2 = other[ind]
+            sign(dot(p1-a,p2-a)) == -1 && (push!(other, a))
+            sign(dot(p1-b,p2-b)) == -1 && (push!(other, b))
+        end
+        push!(set_of_sets,order_counter_clockwise(other))
+        b=a
+        
     end
     
-    return set_of_sets,clipped
+    return set_of_sets,unique(clipped)
 end
-
+function order_counter_clockwise(vertices) #should be convex
+    middle = sum(vertices)/length(vertices)
+    transl = vertices .- Ref(middle)
+    angles =  [atan(t[2],t[1]) for t in transl]
+    return [i[2] for i in sort(zip(angles,vertices))]
+end
 #export sutherlandhodgman
 
 """
@@ -238,30 +275,6 @@ function sutherlandhodgman(subject, clipper)
     clipped = [barytocart(triangle,q) for q in clipped2d ]
 
 end
-function sutherlandhodgman(subject::Simplex, clipper::Simplex)
-    b = boundary(clipper)
-    vertices = verticeslist(subject)
-    clipped = Array(copy(vertices))
-    for bound in b
-        input = copy(clipped)
-        clipped = []
-        for v in input
-            if det([[bound.tangents;normals(bound)[1:end-1]];v-verticeslist(bound)[end]]) > 0
-                for q in input
-                    if det([[bound.tangents;normals(bound)[1:end-1]];q-verticeslist(bound)[end]]) <= 0
-
-                        #TODO eerst naar barycentric van clipper mappen. resulteert in een systeem waar determinant betekenis heeft.
-
-                    end
-                end
-            else
-                push!(clipped,v)
-            end
-        end
-    end
-
-end
-
 function sutherlandhodgman_full(subject, clipper)
 
     triangle = simplex(clipper, Val{2})
@@ -275,27 +288,15 @@ function sutherlandhodgman_full(subject, clipper)
     return set_of_sets,clipped
 end
 
-function complementary_mesh(p1::Simplex{3,2,1,3}, p2::Simplex{3,2,1,3}; tol=eps())
+function complementary_mesh(p1::Simplex{U,2,C,3}, p2::Simplex{U,2,C,3}; tol=eps()) where {U,C}
     set_of_sets1,pq = sutherlandhodgman_full(p1.vertices, p2.vertices)
     set_of_sets2,_ = sutherlandhodgman_full(p2.vertices, p1.vertices)
+
     nonoriented_pq = [ simplex(pq[1], pq[i], pq[i+1]) for i in 2:length(pq)-1 ]
-    nonoriented_set1 = []
-    nonoriented_set2 = []
-    for p in set_of_sets1
-        for i in 2:length(p)-1
-            push!(nonoriented_set1,simplex(p[1],p[i],p[i+1]))
-        end
-    end
-    for p in set_of_sets2
-        for i in 2:length(p)-1
-            push!(nonoriented_set2,simplex(p[1],p[i],p[i+1]))
-        end
-    end
-
     nonoriented_pq = nonoriented_pq[volume.(nonoriented_pq).>tol]
-    nonoriented_set1 = nonoriented_set1[volume.(nonoriented_set1).>tol]
-    nonoriented_set2 = nonoriented_set2[volume.(nonoriented_set2).>tol]
 
+    nonoriented_set2 = vcat(create_triangles.(set_of_sets2)...)
+    nonoriented_set1 = vcat(create_triangles.(set_of_sets1)...)
 
     signs1_pq = Int.(sign.(dot.(normal.(nonoriented_pq),Ref(normal(p1)))))
     signs2_pq = Int.(sign.(dot.(normal.(nonoriented_pq),Ref(normal(p2)))))
@@ -305,4 +306,56 @@ function complementary_mesh(p1::Simplex{3,2,1,3}, p2::Simplex{3,2,1,3}; tol=eps(
     out1 = [flip_normal.(nonoriented_pq,signs1_pq);flip_normal.(nonoriented_set1,signs_set1)]
     out2 = [flip_normal.(nonoriented_pq,signs2_pq);flip_normal.(nonoriented_set2,signs_set2)]
     return out1,out2
+
 end
+
+function create_triangles(p)
+    set = []
+    l = length(p)
+    for j in 0:l-1
+        f = true
+        resize!(set,0)
+        for i in 2:l-1
+            f *= rank(hcat(p[mod1(1+j,l)]-p[mod1(i+j,l)],p[mod1(i+1+j,l)]-p[mod1(i+j,l)])) == 2
+            f && (push!(set,simplex(p[mod1(1+j,l)],p[mod1(i+j,l)],p[mod1(i+1+j,l)])))
+        end
+        if f
+            return set
+        end
+    end
+    return nothing
+end
+
+# function create_triangles(p)
+    
+#     l = length(p)
+#     l==3 && return [simplex(p[1],p[2],p[3])]
+#     mid = sum(p)/length(p)
+#     set = [simplex(mid,p[end],p[1])]
+    
+#     for i in 1:l-1
+#         (push!(set,simplex(mid,p[i],p[i+1])))
+#     end 
+#     return set
+# end
+
+
+function complementary_mesh(p1::Simplex{U,2,0,3}, p2::Simplex{U,2,0,3}; tol=eps()) where {U}
+    set_of_sets1,pq = sutherlandhodgman_full(p1.vertices, p2.vertices)
+    set_of_sets2,_ = sutherlandhodgman_full(p2.vertices, p1.vertices)
+
+    nonoriented_pq = [ simplex(pq[1], pq[i], pq[i+1]) for i in 2:length(pq)-1 ]
+    nonoriented_pq = nonoriented_pq[volume.(nonoriented_pq).>tol]
+
+    nonoriented_set2 = vcat(create_triangles.(set_of_sets2)...)
+    nonoriented_set1 = vcat(create_triangles.(set_of_sets1)...)
+
+    out1 = [nonoriented_pq; nonoriented_set1]
+    out2 = [nonoriented_pq; nonoriented_set2]
+    return out1,out2
+    
+end
+
+
+u = simplex((@SVector [0.0,0.0,0.0]),(@SVector [1.0,0.0,0.0]),(@SVector [0.0,1.0,0.0]))
+v = simplex((@SVector [0.0,0.0,0.0]),(@SVector [-1.0,0.0,0.0]),(@SVector [0.0,1.5,0.0]))

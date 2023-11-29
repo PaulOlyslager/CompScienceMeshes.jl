@@ -46,4 +46,6 @@ include("test_nbd.jl")
 include("test_mapper.jl")
 include("test_convert.jl")
 
+include("test_complementary_mesh.jl")
+
 end
