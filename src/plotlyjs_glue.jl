@@ -1,5 +1,5 @@
 export patch
-export normalcones
+export normals
 export wireframe
 
 function __init__()
