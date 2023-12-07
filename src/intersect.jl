@@ -243,12 +243,12 @@ function sutherlandhodgman2d_full(subject,clipper)
             sign(dot(p1-a,p2-a)) == -1 && (push!(other, a))
             sign(dot(p1-b,p2-b)) == -1 && (push!(other, b))
         end
-        push!(set_of_sets,order_counter_clockwise(other))
+        push!(set_of_sets,unique(order_counter_clockwise(other)))
         b=a
         
     end
     
-    return set_of_sets,unique(clipped)
+    return set_of_sets,unique_tol(clipped)
 end
 function order_counter_clockwise(vertices) #should be convex
     middle = sum(vertices)/length(vertices)
@@ -310,9 +310,10 @@ function complementary_mesh(p1::Simplex{U,2,C,3}, p2::Simplex{U,2,C,3}; tol=eps(
 end
 
 function create_triangles(p)
+    p = unique_tol(p)
     set = []
     l = length(p)
-    for j in 0:l-1
+    for j in 0:l
         f = true
         resize!(set,0)
         for i in 2:l-1
@@ -323,6 +324,7 @@ function create_triangles(p)
             return set
         end
     end
+    println(p)
     return nothing
 end
 

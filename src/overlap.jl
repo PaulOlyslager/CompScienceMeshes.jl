@@ -104,3 +104,16 @@ function overlap(p::Simplex{3,3,0,4,T}, q::Simplex{3,3,0,4,T}) where T
     all(0+tol .<= u .<= 1-tol) && return true
     return false
 end
+
+function Base.unique(points::Vector{Simplex{U,0,C,1,T}}) where {T,U,C}
+    out = Simplex{U,0,C,1,T}[points[1]]
+    l = length(points)
+    for i in 2:l
+        prod(.!(overlap.(out,Ref(points[i])))) && (push!(out,points[i]))
+    end
+    return out
+end
+function unique_tol(points::Vector{T}) where {T}
+    s = [simplex(SVector{1,T}([p])) for p in points]
+    vcat([verticeslist(p) for p in unique(s)]...)
+end
