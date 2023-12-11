@@ -1,21 +1,10 @@
-#stap 1: geef mesh + normaal op 1 cell
-#stap 2: loop over structuur en maak charts aan met: punten, normaal, maak lijst met [1,-1] voor alle faces
-# stap 2 --> recursief, wanneer al op bestaande chart --> stop.
-
-#stap 3 : voeg voor elke chart de hoekpunten toe, 
-#stap  : neem elke chart en vouw over elke edge en kijk welke chart je bereikt, stitch vertices van gemeenschappelijke edge
-using CompScienceMeshes
 using SparseArrays
-struct Chart
-    vertices # the real ones
-    normal::Int
-    oiginal_face::Int
-end
+using LinearAlgebra
 
 mutable struct _VertexMapper
     list::Vector{Vector{Int}}
 end
-_VertexMapper(n::Int) = _VertexMapper([Int[] for i in 1:n])
+_VertexMapper(n::Integer) = _VertexMapper([Int[] for i in 1:n])
 function _add_new_vertex!(v::_VertexMapper,index)
     refs = v.list[index]
     push!(v.list[index],length(refs)+1)
@@ -28,7 +17,13 @@ function _combine!(v::_VertexMapper,index,tup)
     return nothing
 end
 #### IMPORTANT: CHANGE FIRST 2 VERTICES OF A FACE TO CHANGE NORMAL
-#double_mesh(mesh::CompScienceMeshes.AbstractMesh, startcell::Int, normal::Int) = nothing
+"""
+    double_mesh(mesh::CompScienceMeshes.Mesh, startcell::Int, normal::Int)
+
+doubles the mesh on the flat surfaces, keeps it the same on parts with volume. Can also
+be used to generate continuous normal field. startcell is teh index of the cell from witch 
+the algorithm starts, normal is a 1 or -1, depending on the normal on startcell.
+"""
 function double_mesh(mesh::CompScienceMeshes.Mesh, startcell::Int, normal::Int)
     @warn "Mesh cannot have edges with 2 sides at the boundary while edge is not on boundary"
     edges = skeleton(mesh,1)
@@ -56,7 +51,6 @@ function double_mesh(mesh::CompScienceMeshes.Mesh, startcell::Int, normal::Int)
 
 
     D = connectivity(edges,mesh)
-    display(D)
     _double_mesh!(1,mesh.faces,normal_info,D,vertexmapper,newcells,newcells_ind,edges.faces,mesh.vertices)
     return _generate_mesh(mesh,vertexmapper,newcells)
 end
@@ -77,7 +71,7 @@ function _permutation(cell1,cell2) #permutation in first 2 indices!!!
 end
 function angle(x,y)
     a = atan(y,x)
-    a < 0 && (a+=2*pi)
+    a <= 0 && (a+=2*pi)
     return a
 end
 
@@ -93,6 +87,7 @@ function _double_mesh!(cell,oldcells,normal_info,
 
     for e in neighboors
         edge = edges[e[1]]
+        #Select neighboorcell
         if length(e[2])==1
             neighboorcell_old_ind = e[2][1] #index in old 
             neighboorcell_old = Vector(copy(oldcells[neighboorcell_old_ind]))
@@ -107,7 +102,7 @@ function _double_mesh!(cell,oldcells,normal_info,
             
             other_vectors = []
             for ind in e[2]# voegt de vertices toe die niet op de edge liggen
-                other_vectors = [other_vertices;[vertices[i]-cell_middle for i in oldcells[ind] if i ∉ edge]]
+                other_vectors = [other_vectors;[vertices[i]-cell_middle for i in oldcells[ind] if i ∉ edge]]
             end
             angles = []
             for vect in other_vectors
@@ -116,17 +111,17 @@ function _double_mesh!(cell,oldcells,normal_info,
                 push!(angles,angle(x,y))
             end
             ind = argmin(angles)
-            @warn "not tested yet"
             neighboorcell_old_ind = e[2][ind] #index in old 
             neighboorcell_old = Vector(copy(oldcells[neighboorcell_old_ind]))
         end
-
+        # Set orientation of neighboorcell correct
         if D[cell_old_ind,e[1]]*_permutation(cell_old,new_cell_old_notation) == D[neighboorcell_old_ind,e[1]] 
             neighboorcell_old[[1,2]] .= neighboorcell_old[[2,1]]
             s = 2
         else
             s = 1
         end
+        # Select vertices for the neighboorcell
         neighboorcell_new = Tuple{Int,Int}[]
         for i in 1:3
             if neighboorcell_old[i] ∈ edge
@@ -136,9 +131,8 @@ function _double_mesh!(cell,oldcells,normal_info,
                 push!(neighboorcell_new,(neighboorcell_old[i],_add_new_vertex!(vertexmapper,neighboorcell_old[i])))
             end
         end
-
+        # Add neighboorcell or combine if it already exists
         existing_ind = normal_info[s][neighboorcell_old_ind]
-        ### stap 1: kijken of deze al bestaat, zo ja paste vertices samen.
         if existing_ind !=0
             existing = newcells[existing_ind]
             for i in 1:3
@@ -181,9 +175,12 @@ function _generate_mesh(oldmesh::CompScienceMeshes.Mesh{U,D1,T}, vertexmapper::_
     end
     return CompScienceMeshes.Mesh(new_vertices,new_faces)
 end
-
-function find_neighboors(D,chart)
-    neighboors = []
+"""
+    find_neighboors(Connectivity matrix, face index)
+yields a list with tuples: (edge index, [face indices])
+"""
+function find_neighboors(D,chart::Int)
+    neighboors = Tuple{Int,Vector{Int}}[]
     rows = rowvals(D)
     m,n = size(D)
     for edge in 1:n
@@ -199,34 +196,31 @@ function find_neighboors(D,chart)
     return neighboors
 end
 
-
-
-# geef mesh + normaal op 1 cell
-# loop recursief over structuur, telken een face kantelen over de 3 edges, zien waar je uitkomt.
-    # optie1: nieuw hoekpunt nog nergens gebruikt, gebruik dit dan voor de nieuwe face
-    # optie2: nieuw hoekpunt al ergens gebruikt, maak een kopie aan
-    # optie3: kantelen op face die al bestaat -> stop en stitch common edge.
-#
-#
-function test!(out,i,l)
-    print(length(out))
-    println(l)
-    push!(out,i)
-    if i<1
-        return 0
+"""
+    blowmesh(mesh,d)
+moves for each face the vertices a distance d in the direction of the normal
+"""
+function blowmesh(mesh,distance)
+    vert = copy(mesh.vertices)
+    for (i,f) in enumerate(mesh.faces)
+        vert[f] .= vert[f] .+ Ref(distance.*normal(chart(mesh,i)))
     end
-    return [test!(out,i-1,"a"), test!(out,i-1,"b"), test!(out,i-1,"c")]
+    return Mesh(vert,mesh.faces)
 end
+"""
+    remove_nonused_vertices(mesh)
+removes the vertices that are not used in a face
+"""
+function remove_nonused_vertices(mesh)
+    used = zeros(Bool,length(mesh.vertices))
+    faces = typeof(mesh.faces[1])[]
+    for face in mesh.faces
+        used[face] .= true
+    end
+    for face in mesh.faces
+        f = [sum(used[1:ind]) for ind in face]
+        push!(faces,f)
+    end
+    Mesh(mesh.vertices[used],faces)
 
-using StaticArrays
-
-mesh = meshrectangle(1.0,1.0,0.5,3)
-f = mesh.faces
-f[1] = @SVector [1,2,5]
-f[2] = @SVector [1,5,4]
-f[7] = @SVector [5,9,8]
-f[8] = @SVector [5,6,9]
-mesh = Mesh(mesh.vertices,f)
-new_mesh = double_mesh(mesh,1,1)
-import PlotlyJS
-display(PlotlyJS.plot(normals(new_mesh)))
+end

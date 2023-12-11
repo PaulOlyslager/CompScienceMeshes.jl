@@ -142,4 +142,6 @@ include("restrict.jl")
 include("plotlyjs_glue.jl")
 
 include("stripboundedge.jl")
+include("dubble_mesh.jl")
+
 end # module

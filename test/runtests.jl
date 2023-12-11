@@ -47,5 +47,6 @@ include("test_mapper.jl")
 include("test_convert.jl")
 
 include("test_complementary_mesh.jl")
+include("test_dubble_mesh.jl")
 
 end

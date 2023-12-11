@@ -324,7 +324,6 @@ function create_triangles(p)
             return set
         end
     end
-    println(p)
     return nothing
 end
 
